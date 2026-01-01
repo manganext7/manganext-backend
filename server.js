@@ -10,6 +10,7 @@ import homeRoute from "./routes/home.js";
 
 import recommendRoute from "./routes/recommend.js";
 
+import sitemapRoute from "./routes/sitemap.js";
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use("/api/recommend", recommendRoute);
+app.use("/", sitemapRoute);
 
 app.use("/api/anilist", anilistRoute);
 app.use("/api/ai", aiRoute);

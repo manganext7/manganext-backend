@@ -259,5 +259,80 @@ router.get("/top-manga", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch top manga" });
   }
 });
+/**
+ * LATEST ANIME RELEASES
+ * Sorted by most recently aired / started
+ */
+router.get("/latest-anime", async (req, res) => {
+  try {
+    const query = `
+      query {
+        Page(perPage: 20) {
+          media(
+            type: ANIME,
+            sort: START_DATE_DESC
+          ) {
+            id
+            title {
+              romaji
+              english
+            }
+            coverImage {
+              large
+            }
+            episodes
+            averageScore
+            startDate {
+              year
+              month
+              day
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await axios.post(ANILIST_URL, { query });
+    res.json(response.data.data.Page.media);
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ error: "Failed to fetch latest anime" });
+  }
+});
+/**
+ * LATEST MANGA RELEASES
+ * Sorted by recently updated / released
+ */
+router.get("/latest-manga", async (req, res) => {
+  try {
+    const query = `
+      query {
+        Page(perPage: 20) {
+          media(
+            type: MANGA,
+            sort: UPDATED_AT_DESC
+          ) {
+            id
+            title {
+              romaji
+              english
+            }
+            coverImage {
+              large
+            }
+            chapters
+            averageScore
+          }
+        }
+      }
+    `;
+
+    const response = await axios.post(ANILIST_URL, { query });
+    res.json(response.data.data.Page.media);
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ error: "Failed to fetch latest manga" });
+  }
+});
 
 export default router;

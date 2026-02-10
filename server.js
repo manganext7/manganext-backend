@@ -5,11 +5,8 @@ import dotenv from "dotenv";
 import anilistRoute from "./routes/anilist.js";
 import aiRoute from "./routes/ai.js";
 import mangadexRoute from "./routes/mangadex.js";
-
 import homeRoute from "./routes/home.js";
-
 import recommendRoute from "./routes/recommend.js";
-
 import sitemapRoute from "./routes/sitemap.js";
 
 dotenv.config();
@@ -17,18 +14,103 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use("/api/recommend", recommendRoute);
-app.use("/", sitemapRoute);
 
+/* ---------------- API ROUTES ---------------- */
+app.use("/api/recommend", recommendRoute);
 app.use("/api/anilist", anilistRoute);
 app.use("/api/ai", aiRoute);
 app.use("/api/mangadex", mangadexRoute);
 app.use("/api/home", homeRoute);
-app.get("/", (req, res) => {
-  res.send("MangaNext API is running 🚀");
+
+/* ---------------- SEO ROUTES ---------------- */
+
+/**
+ * WATCH ANIME SEO PAGE
+ * Example: /watch/jujutsu-kaisen
+ */
+app.get("/watch/:anime", async (req, res) => {
+  const animeSlug = req.params.anime;
+  const animeTitle = animeSlug
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, l => l.toUpperCase());
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <title>Watch ${animeTitle} Online Free | MangaNext</title>
+      <meta name="description" content="Watch ${animeTitle} anime online in HD quality. All episodes available on MangaNext." />
+      <meta name="robots" content="index, follow" />
+      <link rel="canonical" href="https://manganext.site/watch/${animeSlug}" />
+    </head>
+    <body>
+      <h1>Watch ${animeTitle} Online</h1>
+
+      <p>
+        ${animeTitle} is a popular anime series.
+        You can watch all episodes of ${animeTitle} online for free in HD quality on MangaNext.
+      </p>
+
+      <!-- Frontend takeover -->
+      <div id="app"></div>
+
+      <script>
+        window.__ANIME_SLUG__ = "${animeSlug}";
+      </script>
+      <script src="/watch.js"></script>
+    </body>
+    </html>
+  `);
 });
 
+/**
+ * READ MANGA SEO PAGE
+ * Example: /read/jujutsu-kaisen
+ */
+app.get("/read/:manga", async (req, res) => {
+  const mangaSlug = req.params.manga;
+  const mangaTitle = mangaSlug
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, l => l.toUpperCase());
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <title>Read ${mangaTitle} Manga Online | MangaNext</title>
+      <meta name="description" content="Read ${mangaTitle} manga online. Latest chapters updated fast on MangaNext." />
+      <meta name="robots" content="index, follow" />
+      <link rel="canonical" href="https://manganext.site/read/${mangaSlug}" />
+    </head>
+    <body>
+      <h1>Read ${mangaTitle} Manga Online</h1>
+
+      <p>
+        Read ${mangaTitle} manga online with high-quality scans.
+        MangaNext provides fast updates and smooth reading experience.
+      </p>
+
+      <div id="app"></div>
+
+      <script>
+        window.__MANGA_SLUG__ = "${mangaSlug}";
+      </script>
+      <script src="/read.js"></script>
+    </body>
+    </html>
+  `);
+});
+
+/* ---------------- SITEMAP ---------------- */
+app.use("/", sitemapRoute);
+
+/* ---------------- ROOT ---------------- */
+app.get("/", (req, res) => {
+  res.send("MangaNext API & SEO server is running 🚀");
+});
+
+/* ---------------- SERVER ---------------- */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`✅ Server running on http://localhost:${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+});

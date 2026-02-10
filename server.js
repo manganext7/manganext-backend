@@ -28,40 +28,41 @@ app.use("/api/home", homeRoute);
  * WATCH ANIME SEO PAGE
  * Example: /watch/jujutsu-kaisen
  */
-app.get("/watch/:anime", async (req, res) => {
-  const animeSlug = req.params.anime;
-  const animeTitle = animeSlug
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, l => l.toUpperCase());
+app.get("/watch/:anime/:episode?", (req, res) => {
+  const { anime, episode } = req.params;
+
+  const ep = episode?.replace("episode-", "") || "1";
 
   res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <title>Watch ${animeTitle} Online Free | MangaNext</title>
-      <meta name="description" content="Watch ${animeTitle} anime online in HD quality. All episodes available on MangaNext." />
-      <meta name="robots" content="index, follow" />
-      <link rel="canonical" href="https://manganext.site/watch/${animeSlug}" />
-    </head>
-    <body>
-      <h1>Watch ${animeTitle} Online</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Watch Anime Episode ${ep} Online | MangaNext</title>
+  <meta name="description" content="Watch anime episode ${ep} online in HD. Track progress on MangaNext." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://manganext-backend.onrender.com/watch/${anime}/episode-${ep}" />
+</head>
+<body>
 
-      <p>
-        ${animeTitle} is a popular anime series.
-        You can watch all episodes of ${animeTitle} online for free in HD quality on MangaNext.
-      </p>
+<h1>Watch Anime Episode ${ep}</h1>
 
-      <!-- Frontend takeover -->
-      <div id="app"></div>
+<p>
+Watch episode ${ep} online in HD quality.
+MangaNext helps you track anime and continue the story in manga.
+</p>
 
-      <script>
-        window.__ANIME_SLUG__ = "${animeSlug}";
-      </script>
-      <script src="/watch.js"></script>
-    </body>
-    </html>
-  `);
+<script>
+  // Redirect real users to Netlify UI
+  window.location.replace(
+    "https://manganext.netlify.app/watch.html?id=${anime}&ep=${ep}"
+  );
+</script>
+
+</body>
+</html>
+`);
 });
+
 
 /**
  * READ MANGA SEO PAGE

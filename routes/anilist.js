@@ -2,12 +2,41 @@ import express from "express";
 import axios from "axios";
 
 const router = express.Router();
+const ANILIST_URL = "https://graphql.anilist.co";
 
-// SEARCH (Anime + Manga)
+/* ===============================
+   SIMPLE CACHE
+================================ */
+
+const cache = new Map();
+const CACHE_DURATION = 1000 * 60 * 20; // 20 minutes
+
+function getCache(key) {
+  const data = cache.get(key);
+  if (!data) return null;
+  if (Date.now() - data.timestamp > CACHE_DURATION) {
+    cache.delete(key);
+    return null;
+  }
+  return data.value;
+}
+
+function setCache(key, value) {
+  cache.set(key, { value, timestamp: Date.now() });
+}
+
+/* ===============================
+   SEARCH
+================================ */
+
 router.get("/search", async (req, res) => {
   try {
-    const q = req.query.q;
+    const q = (req.query.q || "").substring(0, 100);
     if (!q) return res.json([]);
+
+    const cacheKey = `search-${q}`;
+    const cached = getCache(cacheKey);
+    if (cached) return res.json(cached);
 
     const gqlQuery = `
       query ($search: String) {
@@ -19,101 +48,71 @@ router.get("/search", async (req, res) => {
             episodes
             chapters
             averageScore
-            title {
-              romaji
-              english
-            }
-            coverImage {
-              large
-              medium
-            }
-            relations {
-              edges {
-                relationType
-                node {
-                  id
-                  type
-                  title {
-                    romaji
-                    english
-                  }
-                  chapters
-                }
-              }
-            }
+            title { romaji english }
+            coverImage { large medium }
           }
         }
       }
     `;
 
     const response = await axios.post(
-      "https://graphql.anilist.co",
-      {
-        query: gqlQuery,
-        variables: { search: q }
-      },
-      { headers: { "Content-Type": "application/json" } }
+      ANILIST_URL,
+      { query: gqlQuery, variables: { search: q } },
+      { timeout: 10000 }
     );
 
-    res.json(response.data.data.Page.media);
+    const data = response.data.data.Page.media;
+
+    setCache(cacheKey, data);
+    res.json(data);
+
   } catch (err) {
-    console.error("AniList search failed:", err.message);
     res.status(500).json([]);
   }
 });
 
-// GET MEDIA BY ID (Anime or Manga)
+/* ===============================
+   GET MEDIA BY ID
+================================ */
+
 router.get("/media/:id", async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "Invalid ID" });
+
+    const cacheKey = `media-${id}`;
+    const cached = getCache(cacheKey);
+    if (cached) return res.json(cached);
 
     const query = `
       query ($id: Int) {
         Media(id: $id) {
           id
           type
-          title {
-            romaji
-            english
-          }
+          title { romaji english }
           description(asHtml: true)
-          coverImage {
-            extraLarge
-          }
+          coverImage { extraLarge }
           bannerImage
           episodes
           chapters
           averageScore
           status
-          relations {
-            edges {
-              relationType
-              node {
-                id
-                type
-                title {
-                  romaji
-                  english
-                }
-                chapters
-              }
-            }
-          }
         }
       }
     `;
 
     const response = await axios.post(
-      "https://graphql.anilist.co",
-      {
-        query,
-        variables: { id: parseInt(id) }
-      }
+      ANILIST_URL,
+      { query, variables: { id } },
+      { timeout: 10000 }
     );
 
-    res.json(response.data.data.Media);
-  } catch (err) {
-    console.error(err);
+    const data = response.data.data.Media;
+
+    setCache(cacheKey, data);
+    res.json(data);
+
+  } catch {
     res.status(500).json({ error: "Failed to fetch media details" });
   }
 });

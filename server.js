@@ -14,7 +14,7 @@ import sitemapRoute from "./routes/sitemap.js";
 import mangaRoute from "./routes/manga.js";
 import commentsRoute from "./routes/comments.js";
 import animeRoute from "./routes/anime.js";
-
+import axios from "axios";
 dotenv.config();
 
 const app = express();
@@ -45,7 +45,15 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json()); // CHANGED: Keep JSON parsing before API middleware
+
+app.use((req, res, next) => { // NEW: Add generic ETag and Last-Modified headers for API responses
+  if (req.path.startsWith("/api/")) { // NEW: Scope caching headers to /api namespace
+    res.setHeader("ETag", `"api-${req.method}-${req.path.length}"`); // NEW: Weak ETag based on method and path length
+    res.setHeader("Last-Modified", new Date().toUTCString()); // NEW: Conservative last-modified timestamp
+  }
+  next(); // NEW: Delegate to subsequent handlers
+});
 
 /* ==========================================================================
    CONSTANTS
@@ -61,17 +69,16 @@ const SITE_NAME = "MangaNext";
 
 /**
  * Sanitizes the slug to prevent XSS and ensure URL safety.
- * Converts spaces to hyphens and removes special characters.
+ * Must stay in sync with frontend slugify.
  */
-function cleanSlug(slug) {
-  if (!slug) return "";
-  return slug
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')        // Replace spaces with -
-    .replace(/[^a-z0-9-]/g, "")  // Remove non-alphanumeric chars
-    .replace(/-+/g, '-');        // Remove multiple hyphens
+function cleanSlug(slug) { // CHANGED: Align slug logic with frontend implementation
+  if (!slug) return ""; // CHANGED: Guard against falsy values
+  return slug // CHANGED: Normalize input then transform
+    .toString() // CHANGED: Ensure string operations
+    .toLowerCase() // CHANGED: Lowercase for SEO-friendly URLs
+    .trim() // CHANGED: Remove stray whitespace
+    .replace(/[^a-z0-9]+/g, "-") // CHANGED: Replace non-alphanumerics with hyphens
+    .replace(/(^-|-$)/g, ""); // CHANGED: Trim leading and trailing hyphens
 }
 
 /**
@@ -83,6 +90,14 @@ function formatTitle(slug) {
   return cleanSlug(slug)
     .replace(/-/g, " ")
     .replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function escapeAttr(str = "") { // NEW: Escape dynamic strings for safe HTML attributes
+  return String(str) // NEW: Coerce to string defensively
+    .replace(/&/g, "&amp;") // NEW: Escape ampersands
+    .replace(/"/g, "&quot;") // NEW: Escape double quotes
+    .replace(/</g, "&lt;") // NEW: Escape less-than
+    .replace(/>/g, "&gt;"); // NEW: Escape greater-than
 }
 
 /**
@@ -125,37 +140,38 @@ app.use("/api/comments", commentsRoute);
 // 1. ANIME DETAILS PAGE
 // --------------------------------------------------------------------------
 
-app.get("/anime/:slug", async (req, res) => {
+app.get("/anime/:id/:slug", async (req, res) => {
   seoHeaders(res);
-
+  const id = parseInt(req.params.id);
   const slug = cleanSlug(req.params.slug);
   const formattedTitle = formatTitle(slug);
-  const pageUrl = `${SITE_URL}/anime/${slug}`;
-  const targetUrl = `${FRONTEND_URL}/details.html?slug=${slug}`;
+  const pageUrl = `${SITE_URL}/anime/${id}/${slug}`; // CHANGED: Keep SEO proxy URL for diagnostics
+  const canonicalUrl = `${FRONTEND_URL}/anime/${id}/${slug}`; // NEW: Canonical should point to frontend URL
+  const targetUrl = canonicalUrl; // CHANGED: Redirect users to Netlify frontend route
 
   let animeData = null;
 
   try {
     const query = `
-      query ($search: String) {
-        Media(search: $search, type: ANIME) {
-          title { romaji english }
-          description(asHtml: false)
-          episodes
-          averageScore
-          status
-          season
-          seasonYear
-          genres
-          coverImage { extraLarge }
-          bannerImage
-        }
-      }
-    `;
+  query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+      title { romaji english }
+      description(asHtml: false)
+      episodes
+      averageScore
+      status
+      season
+      seasonYear
+      genres
+      coverImage { extraLarge }
+      bannerImage
+    }
+  }
+`;
 
     const response = await axios.post(
       "https://graphql.anilist.co",
-      { query, variables: { search: formattedTitle } },
+      { query, variables: { id } },
       { timeout: 8000 }
     );
 
@@ -173,7 +189,7 @@ app.get("/anime/:slug", async (req, res) => {
     animeData?.description?.replace(/<[^>]*>?/gm, "").substring(0, 500) ||
     `Watch ${title} anime online in high quality.`;
 
-  const episodes = animeData?.episodes || "N/A";
+  const episodes = animeData?.episodes || "N/A"; // CHANGED: Preserve episodes while omitting N/A from JSON-LD
   const score = animeData?.averageScore || "N/A";
   const status = animeData?.status || "Unknown";
   const genres = animeData?.genres?.join(", ") || "";
@@ -195,9 +211,9 @@ app.get("/anime/:slug", async (req, res) => {
       "@context": "https://schema.org",
       "@type": "TVSeries",
       "name": title,
-      "numberOfEpisodes": episodes,
       "genre": genres,
-      "url": pageUrl
+      ...(episodes !== "N/A" && { numberOfEpisodes: episodes }),
+      "url": canonicalUrl
     },
     {
       "@context": "https://schema.org",
@@ -230,44 +246,50 @@ app.get("/anime/:slug", async (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Watch ${title} Anime Online (${season} ${seasonYear}) | ${SITE_NAME}</title>
+<title>Watch ${escapeAttr(title)} Anime Online (${escapeAttr(season)} ${escapeAttr(seasonYear)}) | ${SITE_NAME}</title>
 
-<meta name="description" content="${description}">
-<meta name="keywords" content="${title} anime, ${genres}, ${title} episodes, ${title} season ${seasonYear}">
+<meta name="description" content="${escapeAttr(description)}">
+<meta name="keywords" content="${escapeAttr(`${title} anime, ${genres}, ${title} episodes, ${title} season ${seasonYear}`)}">
 <meta name="robots" content="index, follow">
-<link rel="canonical" href="${pageUrl}">
+<meta name="theme-color" content="#7c3aed">
+<link rel="canonical" href="${escapeAttr(canonicalUrl)}">
 
 <meta property="og:type" content="video.tv_show">
-<meta property="og:url" content="${pageUrl}">
-<meta property="og:title" content="Watch ${title} Anime Online">
-<meta property="og:description" content="${description}">
+<meta property="og:url" content="${escapeAttr(canonicalUrl)}">
+<meta property="og:title" content="Watch ${escapeAttr(title)} Anime Online">
+<meta property="og:description" content="${escapeAttr(description)}">
 <meta property="og:site_name" content="${SITE_NAME}">
-${image ? `<meta property="og:image" content="${image}">` : ""}
+${image ? `<meta property="og:image" content="${escapeAttr(image)}">` : ""}
 
 <meta property="twitter:card" content="summary_large_image">
-<meta property="twitter:title" content="Watch ${title} Anime Online">
-<meta property="twitter:description" content="${description}">
-${image ? `<meta property="twitter:image" content="${image}">` : ""}
+<meta property="twitter:title" content="Watch ${escapeAttr(title)} Anime Online">
+<meta property="twitter:description" content="${escapeAttr(description)}">
+${image ? `<meta property="twitter:image" content="${escapeAttr(image)}">` : ""}
 
 <script type="application/ld+json">
 ${JSON.stringify(schemaData)}
 </script>
 
 <noscript>
-<meta http-equiv="refresh" content="0;url=${targetUrl}">
+<meta http-equiv="refresh" content="0;url=${escapeAttr(targetUrl)}">
 </noscript>
 </head>
 
 <body>
-<h1>Watch ${title} Anime Online</h1>
+<nav>
+  <a href="${FRONTEND_URL}/" rel="noopener">Home</a> |
+  <a href="${FRONTEND_URL}/search.html" rel="noopener">Search</a> |
+  <a href="${FRONTEND_URL}/" rel="noopener">Browse Anime</a>
+</nav>
+<h1>Watch ${escapeAttr(title)} Anime Online</h1>
 
 <article>
-<p><strong>Episodes:</strong> ${episodes}</p>
-<p><strong>Average Score:</strong> ${score}</p>
-<p><strong>Status:</strong> ${status}</p>
-<p><strong>Genres:</strong> ${genres}</p>
+<p><strong>Episodes:</strong> ${escapeAttr(episodes)}</p>
+<p><strong>Average Score:</strong> ${escapeAttr(score)}</p>
+<p><strong>Status:</strong> ${escapeAttr(status)}</p>
+<p><strong>Genres:</strong> ${escapeAttr(genres)}</p>
 
-<p>${description}</p>
+<p>${escapeAttr(description)}</p>
 
 <h2>Where Does ${title} Anime End in the Manga?</h2>
 <p>
@@ -277,22 +299,22 @@ visit the detailed guide below.
 </p>
 
 <p>
-<a href="${pageUrl}/continue-manga">
-Continue ${title} in Manga →
+<a href="${FRONTEND_URL}/anime/${id}/${slug}/continue-manga">
+Continue ${escapeAttr(title)} in Manga →
 </a>
 </p>
 
 <h2>Similar Anime</h2>
 <p>
-<a href="${SITE_URL}/best-anime-like/${slug}">
-Best Anime Like ${title} →
+<a href="${FRONTEND_URL}/best-anime-like/${slug}">
+Best Anime Like ${escapeAttr(title)} →
 </a>
 </p>
 </article>
 
 <div style="margin-top:40px;text-align:center;">
 <p>Redirecting you to the full experience...</p>
-<p>If not redirected, <a href="${targetUrl}">click here</a>.</p>
+<p>If not redirected, <a href="${escapeAttr(targetUrl)}">click here</a>.</p>
 </div>
 
 <script>
@@ -307,13 +329,14 @@ window.location.replace("${targetUrl}");
 // --------------------------------------------------------------------------
 // 2. ANIME WATCH EPISODE
 // --------------------------------------------------------------------------
-app.get("/anime/:slug/episode-:number", (req, res) => {
-  seoHeaders(res);
 
+app.get("/anime/:id/:slug/episode-:number", (req, res) => {
+  seoHeaders(res);
+  const id = parseInt(req.params.id);
   const slug = cleanSlug(req.params.slug);
   const ep = safeInt(req.params.number);
   const title = formatTitle(slug);
-  const pageUrl = `${SITE_URL}/anime/${slug}/episode-${ep}`;
+  const pageUrl = `${SITE_URL}/anime/${id}/${slug}/episode-${ep}`;
   const targetUrl = `${FRONTEND_URL}/watch.html?slug=${slug}&episode=${ep}`;
 
   const schemaData = {
@@ -368,13 +391,13 @@ app.get("/anime/:slug/episode-:number", (req, res) => {
 // --------------------------------------------------------------------------
 // 3. ANIME EPISODE RELEASE DATE
 // --------------------------------------------------------------------------
-app.get("/anime/:slug/episode-:number/release-date", (req, res) => {
+app.get("/anime/:id/:slug/episode-:number/release-date", (req, res) => {
   seoHeaders(res);
-
+  const id = parseInt(req.params.id);
   const slug = cleanSlug(req.params.slug);
   const ep = safeInt(req.params.number);
   const title = formatTitle(slug);
-  const pageUrl = `${SITE_URL}/anime/${slug}/episode-${ep}/release-date`;
+  const pageUrl = `${SITE_URL}/anime/${id}/${slug}/episode-${ep}/release-date`;
   const targetUrl = `${FRONTEND_URL}/release.html?anime=${slug}&episode=${ep}`;
 
   const schemaData = [
@@ -561,12 +584,13 @@ app.get("/best-anime-like/:slug", (req, res) => {
 // --------------------------------------------------------------------------
 // 5. CONTINUE MANGA (High Traffic / Tool Page)
 // --------------------------------------------------------------------------
-app.get("/anime/:slug/continue-manga", (req, res) => {
+app.get("/anime/:id/:slug/continue-manga", (req, res) => {
   seoHeaders(res);
 
   const slug = cleanSlug(req.params.slug);
   const title = formatTitle(slug);
-  const pageUrl = `${SITE_URL}/anime/${slug}/continue-manga`;
+  const id = parseInt(req.params.id);
+  const pageUrl = `${SITE_URL}/anime/${id}/${slug}/continue-manga`;
   const targetUrl = `${FRONTEND_URL}/continue/index.html?slug=${slug}`;
 
   const schemaData = [
@@ -678,7 +702,7 @@ app.get("/anime/:slug/continue-manga", (req, res) => {
 // --------------------------------------------------------------------------
 // 6. MANGA DETAIL
 // --------------------------------------------------------------------------
-import axios from "axios";
+
 
 app.get("/manga/:slug", async (req, res) => {
   seoHeaders(res);
@@ -708,10 +732,10 @@ app.get("/manga/:slug", async (req, res) => {
     `;
 
     const response = await axios.post(
-      "https://graphql.anilist.co",
-      { query, variables: { search: formattedTitle } },
-      { timeout: 8000 }
-    );
+  "https://graphql.anilist.co",
+  { query, variables: { search: formattedTitle } },
+  { timeout: 8000 }
+);
 
     mangaData = response.data?.data?.Media;
   } catch (err) {
